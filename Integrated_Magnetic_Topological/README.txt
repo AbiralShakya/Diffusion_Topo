@@ -1,3 +1,5 @@
+IMPORTANT: ensure you aren't on pytorch 2.6.0 as torchscatter is not supported
+
 Compare logic  with generative topological insulators code with cdvae (btw this is very vanilla architecture) 
     compare this with magnetic prediction with atomic corodinates and look at shared latent space
 
