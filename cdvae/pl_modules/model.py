@@ -134,8 +134,9 @@ class CrystGNN_Supervise(BaseModule):
 
 
 class CDVAE(BaseModule):
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, reward_function=None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+        self.reward_function = reward_function
 
         self.encoder = hydra.utils.instantiate(
             self.hparams.encoder, num_targets=self.hparams.latent_dim)
@@ -308,6 +309,67 @@ class CDVAE(BaseModule):
         return samples
 
     def forward(self, batch, teacher_forcing, training):
+
+    def refine_latent(self, z, batch, num_steps=10, lr=0.1):
+        """Refines the latent vector `z` to maximize the reward function."""
+        z.requires_grad_(True)
+        optimizer = torch.optim.Adam([z], lr=lr)
+
+        for _ in range(num_steps):
+            optimizer.zero_grad()
+            # Decode crystal structure from the latent vector
+            (pred_num_atoms, pred_lengths_and_angles, pred_lengths, pred_angles,
+             pred_composition_per_atom) = self.decode_stats(z, batch.num_atoms, batch.lengths, batch.angles, teacher_forcing=False)
+
+            # Create a dummy batch with the decoded information
+            # This is needed because the reward function expects a batch
+            dummy_batch = batch.clone()
+            dummy_batch.num_atoms = torch.round(torch.softmax(pred_num_atoms, dim=-1).argmax(dim=-1)).long()
+            dummy_batch.lengths = pred_lengths
+            dummy_batch.angles = pred_angles
+
+            # Calculate the reward
+            reward = self.reward_function(dummy_batch)
+
+            # Calculate the gradients
+            loss = -reward  # We want to maximize the reward, so we minimize the negative reward
+            loss.backward()
+
+            # Update the latent vector
+            optimizer.step()
+
+        return z.detach()
+        
+        
+    def refine_latent(self, z, batch, num_steps=10, lr=0.1):
+        """Refines the latent vector `z` to maximize the reward function."""
+        z.requires_grad_(True)
+        optimizer = torch.optim.Adam([z], lr=lr)
+
+        for _ in range(num_steps):
+            optimizer.zero_grad()
+            # Decode crystal structure from the latent vector
+            (pred_num_atoms, pred_lengths_and_angles, pred_lengths, pred_angles,
+             pred_composition_per_atom) = self.decode_stats(z, batch.num_atoms, batch.lengths, batch.angles, teacher_forcing=False)
+
+            # Create a dummy batch with the decoded information
+            # This is needed because the reward function expects a batch
+            dummy_batch = batch.clone()
+            dummy_batch.num_atoms = torch.round(torch.softmax(pred_num_atoms, dim=-1).argmax(dim=-1)).long()
+            dummy_batch.lengths = pred_lengths
+            dummy_batch.angles = pred_angles
+
+            # Calculate the reward
+            reward = self.reward_function(dummy_batch)
+
+            # Calculate the gradients
+            loss = -reward  # We want to maximize the reward, so we minimize the negative reward
+            loss.backward()
+
+            # Update the latent vector
+            optimizer.step()
+
+        return z.detach()
         # hacky way to resolve the NaN issue. Will need more careful debugging later.
         mu, log_var, z = self.encode(batch)
 
