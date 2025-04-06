@@ -6,6 +6,10 @@ import dotenv
 import pytorch_lightning as pl
 from omegaconf import DictConfig, OmegaConf
 
+dotenv.load_dotenv()
+dotenv.load_dotenv(Path("/Users/abiralshakya/Documents/Research/Topological_Insulators_OnGithub/generative_nmti/cdvae/proejctrootcdvae.env"))
+PROJECT_ROOT: Path = Path(os.getenv("PROJECT_ROOT"))
+
 
 def get_env(env_name: str, default: Optional[str] = None) -> str:
     """
@@ -88,10 +92,10 @@ def log_hyperparameters(
 # Load environment variables
 load_envs()
 
-# Set the cwd to the project root
-PROJECT_ROOT: Path = Path(get_env("PROJECT_ROOT"))
-assert (
-    PROJECT_ROOT.exists()
-), "You must configure the PROJECT_ROOT environment variable in a .env file!"
+# # Set the cwd to the project root
+# PROJECT_ROOT: Path = Path(get_env("PROJECT_ROOT"))
+# assert (
+#     PROJECT_ROOT.exists()
+# ), "You must configure the PROJECT_ROOT environment variable in a .env file!"
 
 os.chdir(PROJECT_ROOT)

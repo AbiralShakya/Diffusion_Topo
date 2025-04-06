@@ -764,6 +764,9 @@ def batch_accuracy_precision_recall(
 
     return np.mean(accuracies), np.mean(precisions), np.mean(recalls)
 
+def ATOM_TYPES(crystal):
+    return crystal.atomic_numbers
+
 
 class StandardScaler:
     """A :class:`StandardScaler` normalizes the features of a dataset.
