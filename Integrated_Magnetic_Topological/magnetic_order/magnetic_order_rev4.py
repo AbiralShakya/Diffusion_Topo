@@ -877,71 +877,578 @@ def test_model(model, test_loader, device):
         'topological_labels': all_topological_labels
     }
 
-# Usage example:
-def run_test():
-    # Load the best saved model
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = YourModelClass().to(device)
-    
-    checkpoint = torch.load(os.path.join(PARAMS['checkpoint_dir'], 'best_model.pth'))
-    model.load_state_dict(checkpoint['model_state_dict'])
-    
-    # Create test data loader
-    test_dataset = YourDataset(data_path=PARAMS['test_data_path'])
-    test_loader = DataLoader(test_dataset, batch_size=PARAMS['batch_size'], shuffle=False)
-    
-    # Run test
-    test_results = test_model(model, test_loader, device)
-    
-    # Additional analysis
-    # Confusion matrix for magnetic predictions
-    magnetic_cm = confusion_matrix(test_results['magnetic_labels'], test_results['magnetic_preds'])
-    print("Magnetic Confusion Matrix:")
-    print(magnetic_cm)
-    
-    # Confusion matrix for topological predictions
-    topological_cm = confusion_matrix(test_results['topological_labels'], test_results['topological_preds'])
-    print("Topological Confusion Matrix:")
-    print(topological_cm)
-    
-    # You can add more detailed analysis here, like precision, recall, etc.
-    
-    # Optional: Visualize some predictions
-    visualize_predictions(model, test_loader, device, num_samples=5)
-    
-    return test_results
 
-# Optional: Visualization function
-def visualize_predictions(model, data_loader, device, num_samples=5):
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from torch.optim import Adam
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+import numpy as np
+import os
+import time
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pymatgen.core import Structure
+
+# Custom dataset for materials data
+class MaterialsDataset(Dataset):
+    def __init__(self, struct_dict, magnetic_labels, topological_labels, transform=None):
+        """
+        Args:
+            struct_dict (dict): Dictionary containing materials data with keys:
+                - structures: list of pymatgen Structure objects
+                - materials_id: list of material IDs
+                - nsites: list of number of sites
+                - formulas: list of chemical formulas
+                - order: list of order parameters
+            magnetic_labels (array): Binary labels for magnetic properties
+            topological_labels (array): Binary labels for topological properties
+            transform (callable, optional): Optional transform to be applied on features
+        """
+        self.structures = struct_dict["structures"]
+        self.materials_ids = struct_dict["materials_id"]
+        self.nsites = struct_dict["nsites"]
+        self.formulas = struct_dict["formulas"]
+        self.order = struct_dict["order"]
+        
+        self.magnetic_labels = magnetic_labels
+        self.topological_labels = topological_labels
+        self.transform = transform
+        
+    def __len__(self):
+        return len(self.structures)
+    
+    def __getitem__(self, idx):
+        # Extract relevant features from the structure
+        structure = self.structures[idx]
+        
+        # Feature extraction from structure
+        features = self._extract_features(structure, idx)
+        
+        magnetic_label = self.magnetic_labels[idx]
+        topological_label = self.topological_labels[idx]
+        
+        if self.transform:
+            features = self.transform(features)
+            
+        return torch.tensor(features, dtype=torch.float32), torch.tensor(magnetic_label, dtype=torch.float32), torch.tensor(topological_label, dtype=torch.float32)
+    
+    def _extract_features(self, structure, idx):
+        """Extract features from a pymatgen Structure object and other available data"""
+        # Here you can implement feature extraction based on the structure
+        # This is a simple example - you'll want to enhance this based on your domain knowledge
+        
+        # Basic structural features
+        num_sites = self.nsites[idx]
+        order_param = self.order[idx]
+        
+        # Get lattice parameters
+        a, b, c = structure.lattice.abc
+        alpha, beta, gamma = structure.lattice.angles
+        volume = structure.volume
+        density = structure.density
+        
+        # Element-based features (example)
+        elements = [site.specie.symbol for site in structure]
+        unique_elements = set(elements)
+        num_elements = len(unique_elements)
+        
+        # Count of each element
+        element_counts = {}
+        for element in elements:
+            if element in element_counts:
+                element_counts[element] += 1
+            else:
+                element_counts[element] = 1
+        
+        # Statistical features of atomic properties
+        atomic_numbers = [site.specie.Z for site in structure]
+        avg_atomic_number = np.mean(atomic_numbers)
+        std_atomic_number = np.std(atomic_numbers)
+        
+        # Combine all features
+        features = [
+            num_sites, 
+            order_param,
+            a, b, c, 
+            alpha, beta, gamma,
+            volume,
+            density,
+            num_elements,
+            avg_atomic_number,
+            std_atomic_number
+        ]
+        
+        # You can add more domain-specific features here
+        
+        return np.array(features, dtype=np.float32)
+
+# Model Definition - Multi-task Neural Network
+class MagneticTopologicalModel(nn.Module):
+    def __init__(self, input_dim, hidden_dims=[256, 128, 64], dropout_rate=0.3):
+        super(MagneticTopologicalModel, self).__init__()
+        
+        self.input_dim = input_dim
+        self.hidden_dims = hidden_dims
+        
+        # Shared layers
+        layers = []
+        prev_dim = input_dim
+        for dim in hidden_dims:
+            layers.append(nn.Linear(prev_dim, dim))
+            layers.append(nn.ReLU())
+            layers.append(nn.BatchNorm1d(dim))
+            layers.append(nn.Dropout(dropout_rate))
+            prev_dim = dim
+        
+        self.shared_layers = nn.Sequential(*layers)
+        
+        # Task-specific heads
+        self.magnetic_head = nn.Linear(hidden_dims[-1], 1)
+        self.topological_head = nn.Linear(hidden_dims[-1], 1)
+        
+    def forward(self, x):
+        # Forward pass through shared layers
+        shared_features = self.shared_layers(x)
+        
+        # Task-specific predictions
+        magnetic_output = self.magnetic_head(shared_features)
+        topological_output = self.topological_head(shared_features)
+        
+        return magnetic_output.squeeze(), topological_output.squeeze()
+
+def train_epoch(model, train_loader, optimizer, device):
+    model.train()
+    train_loss = 0
+    magnetic_loss = 0
+    topological_loss = 0
+    
+    all_magnetic_preds = []
+    all_magnetic_labels = []
+    all_topological_preds = []
+    all_topological_labels = []
+    
+    for batch_idx, (data, magnetic_target, topological_target) in enumerate(train_loader):
+        data = data.to(device)
+        magnetic_target = magnetic_target.to(device)
+        topological_target = topological_target.to(device)
+        
+        optimizer.zero_grad()
+        
+        # Forward pass
+        magnetic_output, topological_output = model(data)
+        
+        # Calculate losses
+        batch_magnetic_loss = F.binary_cross_entropy_with_logits(magnetic_output, magnetic_target)
+        batch_topological_loss = F.binary_cross_entropy_with_logits(topological_output, topological_target)
+        batch_loss = batch_magnetic_loss + batch_topological_loss
+        
+        # Backward pass
+        batch_loss.backward()
+        optimizer.step()
+        
+        # Accumulate losses
+        train_loss += batch_loss.item()
+        magnetic_loss += batch_magnetic_loss.item()
+        topological_loss += batch_topological_loss.item()
+        
+        # Store predictions and labels for metrics calculation
+        magnetic_preds = (torch.sigmoid(magnetic_output) > 0.5).float().cpu().numpy()
+        topological_preds = (torch.sigmoid(topological_output) > 0.5).float().cpu().numpy()
+        
+        all_magnetic_preds.extend(magnetic_preds)
+        all_magnetic_labels.extend(magnetic_target.cpu().numpy())
+        all_topological_preds.extend(topological_preds)
+        all_topological_labels.extend(topological_target.cpu().numpy())
+    
+    # Calculate average losses
+    train_loss /= len(train_loader)
+    magnetic_loss /= len(train_loader)
+    topological_loss /= len(train_loader)
+    
+    # Calculate metrics
+    magnetic_acc = accuracy_score(all_magnetic_labels, all_magnetic_preds)
+    magnetic_f1 = f1_score(all_magnetic_labels, all_magnetic_preds, average='weighted')
+    topological_acc = accuracy_score(all_topological_labels, all_topological_preds)
+    topological_f1 = f1_score(all_topological_labels, all_topological_preds, average='weighted')
+    
+    return train_loss, magnetic_loss, topological_loss, magnetic_acc, magnetic_f1, topological_acc, topological_f1
+
+def validate(model, val_loader, device):
     model.eval()
-    samples_seen = 0
+    val_loss = 0
+    magnetic_loss = 0
+    topological_loss = 0
+    
+    all_magnetic_preds = []
+    all_magnetic_labels = []
+    all_topological_preds = []
+    all_topological_labels = []
     
     with torch.no_grad():
-        for data, magnetic_target, topological_target in data_loader:
-            if samples_seen >= num_samples:
-                break
-                
+        for batch_idx, (data, magnetic_target, topological_target) in enumerate(val_loader):
             data = data.to(device)
+            magnetic_target = magnetic_target.to(device)
+            topological_target = topological_target.to(device)
+            
+            # Forward pass
             magnetic_output, topological_output = model(data)
             
-            # Convert to predictions
+            # Calculate losses
+            batch_magnetic_loss = F.binary_cross_entropy_with_logits(magnetic_output, magnetic_target)
+            batch_topological_loss = F.binary_cross_entropy_with_logits(topological_output, topological_target)
+            batch_loss = batch_magnetic_loss + batch_topological_loss
+            
+            # Accumulate losses
+            val_loss += batch_loss.item()
+            magnetic_loss += batch_magnetic_loss.item()
+            topological_loss += batch_topological_loss.item()
+            
+            # Store predictions and labels for metrics calculation
             magnetic_preds = (torch.sigmoid(magnetic_output) > 0.5).float().cpu().numpy()
             topological_preds = (torch.sigmoid(topological_output) > 0.5).float().cpu().numpy()
             
-            # For each sample in the batch
-            for i in range(min(len(data), num_samples - samples_seen)):
-                samples_seen += 1
-                
-                # Here you could visualize the input data and the predictions
-                print(f"Sample {samples_seen}:")
-                print(f"Magnetic - True: {magnetic_target[i].cpu().numpy()}, Predicted: {magnetic_preds[i]}")
-                print(f"Topological - True: {topological_target[i].cpu().numpy()}, Predicted: {topological_preds[i]}")
-                
-                # If your data is image-like, you could display it with matplotlib
-                # plt.figure()
-                # plt.imshow(data[i].cpu().numpy().transpose(1, 2, 0))  # Assuming data is in [C, H, W] format
-                # plt.title(f"Magnetic: {magnetic_preds[i]}, Topo: {topological_preds[i]}")
-                # plt.show()
+            all_magnetic_preds.extend(magnetic_preds)
+            all_magnetic_labels.extend(magnetic_target.cpu().numpy())
+            all_topological_preds.extend(topological_preds)
+            all_topological_labels.extend(topological_target.cpu().numpy())
+    
+    # Calculate average losses
+    val_loss /= len(val_loader)
+    magnetic_loss /= len(val_loader)
+    topological_loss /= len(val_loader)
+    
+    # Calculate metrics
+    magnetic_acc = accuracy_score(all_magnetic_labels, all_magnetic_preds)
+    magnetic_f1 = f1_score(all_magnetic_labels, all_magnetic_preds, average='weighted')
+    topological_acc = accuracy_score(all_topological_labels, all_topological_preds)
+    topological_f1 = f1_score(all_topological_labels, all_topological_preds, average='weighted')
+    
+    return val_loss, magnetic_loss, topological_loss, magnetic_acc, magnetic_f1, topological_acc, topological_f1
 
+def test_model(model, test_loader, device):
+    model.eval()
+    test_loss = 0
+    magnetic_loss = 0
+    topological_loss = 0
+    
+    all_magnetic_preds = []
+    all_magnetic_labels = []
+    all_topological_preds = []
+    all_topological_labels = []
+    all_material_ids = []  # To track which materials were predicted correctly/incorrectly
+    
+    with torch.no_grad():
+        for batch_idx, (data, magnetic_target, topological_target) in enumerate(test_loader):
+            data = data.to(device)
+            magnetic_target = magnetic_target.to(device)
+            topological_target = topological_target.to(device)
+            
+            # Forward pass
+            magnetic_output, topological_output = model(data)
+            
+            # Calculate losses
+            batch_magnetic_loss = F.binary_cross_entropy_with_logits(magnetic_output, magnetic_target)
+            batch_topological_loss = F.binary_cross_entropy_with_logits(topological_output, topological_target)
+            batch_loss = batch_magnetic_loss + batch_topological_loss
+            
+            # Accumulate losses
+            test_loss += batch_loss.item()
+            magnetic_loss += batch_magnetic_loss.item()
+            topological_loss += batch_topological_loss.item()
+            
+            # Store predictions and labels for metrics calculation
+            magnetic_preds = (torch.sigmoid(magnetic_output) > 0.5).float().cpu().numpy()
+            topological_preds = (torch.sigmoid(topological_output) > 0.5).float().cpu().numpy()
+            
+            all_magnetic_preds.extend(magnetic_preds)
+            all_magnetic_labels.extend(magnetic_target.cpu().numpy())
+            all_topological_preds.extend(topological_preds)
+            all_topological_labels.extend(topological_target.cpu().numpy())
+            
+            # Track material IDs for this batch (if available in the dataset)
+            # all_material_ids.extend([test_loader.dataset.materials_ids[idx] for idx in range(batch_idx * test_loader.batch_size, min((batch_idx + 1) * test_loader.batch_size, len(test_loader.dataset)))])
+    
+    # Calculate average losses
+    test_loss /= len(test_loader)
+    magnetic_loss /= len(test_loader)
+    topological_loss /= len(test_loader)
+    
+    # Convert lists to arrays for scikit-learn metrics
+    all_magnetic_preds = np.array(all_magnetic_preds)
+    all_magnetic_labels = np.array(all_magnetic_labels)
+    all_topological_preds = np.array(all_topological_preds)
+    all_topological_labels = np.array(all_topological_labels)
+    
+    # Calculate metrics
+    magnetic_acc = accuracy_score(all_magnetic_labels, all_magnetic_preds)
+    magnetic_f1 = f1_score(all_magnetic_labels, all_magnetic_preds, average='weighted')
+    topological_acc = accuracy_score(all_topological_labels, all_topological_preds)
+    topological_f1 = f1_score(all_topological_labels, all_topological_preds, average='weighted')
+    
+    # Print results
+    print(f"Test Results:")
+    print(f"Total Loss: {test_loss:.4f}")
+    print(f"Magnetic Loss: {magnetic_loss:.4f}, Accuracy: {magnetic_acc:.4f}, F1 Score: {magnetic_f1:.4f}")
+    print(f"Topological Loss: {topological_loss:.4f}, Accuracy: {topological_acc:.4f}, F1 Score: {topological_f1:.4f}")
+    
+    # Calculate and plot confusion matrices
+    plot_confusion_matrices(all_magnetic_labels, all_magnetic_preds, all_topological_labels, all_topological_preds)
+    
+    return {
+        'test_loss': test_loss,
+        'magnetic_loss': magnetic_loss,
+        'topological_loss': topological_loss,
+        'magnetic_acc': magnetic_acc,
+        'magnetic_f1': magnetic_f1,
+        'topological_acc': topological_acc,
+        'topological_f1': topological_f1,
+        'magnetic_preds': all_magnetic_preds,
+        'magnetic_labels': all_magnetic_labels,
+        'topological_preds': all_topological_preds,
+        'topological_labels': all_topological_labels
+    }
+
+def plot_confusion_matrices(magnetic_labels, magnetic_preds, topological_labels, topological_preds):
+    # Create figure with two subplots
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    
+    # Plot magnetic confusion matrix
+    magnetic_cm = confusion_matrix(magnetic_labels, magnetic_preds)
+    sns.heatmap(magnetic_cm, annot=True, fmt="d", cmap="Blues", ax=axes[0])
+    axes[0].set_title("Magnetic Property Confusion Matrix")
+    axes[0].set_xlabel("Predicted")
+    axes[0].set_ylabel("True")
+    
+    # Plot topological confusion matrix
+    topological_cm = confusion_matrix(topological_labels, topological_preds)
+    sns.heatmap(topological_cm, annot=True, fmt="d", cmap="Greens", ax=axes[1])
+    axes[1].set_title("Topological Property Confusion Matrix")
+    axes[1].set_xlabel("Predicted")
+    axes[1].set_ylabel("True")
+    
+    plt.tight_layout()
+    plt.savefig("confusion_matrices.png")
+    plt.show()
+    
+    # Print additional metrics
+    print("\nDetailed Classification Results:")
+    print("Magnetic Property:")
+    print(f"True Positive: {magnetic_cm[1, 1]}")
+    print(f"False Positive: {magnetic_cm[0, 1]}")
+    print(f"True Negative: {magnetic_cm[0, 0]}")
+    print(f"False Negative: {magnetic_cm[1, 0]}")
+    
+    print("\nTopological Property:")
+    print(f"True Positive: {topological_cm[1, 1]}")
+    print(f"False Positive: {topological_cm[0, 1]}")
+    print(f"True Negative: {topological_cm[0, 0]}")
+    print(f"False Negative: {topological_cm[1, 0]}")
+
+# Main training function
+def train_model(train_struct_dict, val_struct_dict, train_magnetic_labels, train_topological_labels, 
+               val_magnetic_labels, val_topological_labels, params):
+    # Setup device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+    
+    # Create datasets
+    train_dataset = MaterialsDataset(train_struct_dict, train_magnetic_labels, train_topological_labels)
+    val_dataset = MaterialsDataset(val_struct_dict, val_magnetic_labels, val_topological_labels)
+    
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=params['batch_size'], shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=params['batch_size'], shuffle=False)
+    
+    # Determine input dimension based on feature extraction
+    sample_features = train_dataset[0][0]
+    input_dim = sample_features.shape[0]
+    
+    # Initialize model
+    model = MagneticTopologicalModel(input_dim, hidden_dims=params['hidden_dims'], 
+                                     dropout_rate=params['dropout_rate']).to(device)
+    
+    # Initialize optimizer and scheduler
+    optimizer = Adam(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
+    
+    # Initialize tracking variables
+    best_val_loss = float('inf')
+    early_stop_counter = 0
+    history = {
+        'train_loss': [], 'val_loss': [],
+        'train_magnetic_loss': [], 'val_magnetic_loss': [],
+        'train_topological_loss': [], 'val_topological_loss': [],
+        'magnetic_acc': [], 'magnetic_f1': [],
+        'topological_acc': [], 'topological_f1': []
+    }
+    
+    # Create checkpoint directory if it doesn't exist
+    os.makedirs(params['checkpoint_dir'], exist_ok=True)
+    
+    # Training loop
+    for epoch in range(params['max_epochs']):
+        epoch_start = time.time()
+        
+        # Train one epoch
+        train_loss, train_magnetic_loss, train_topological_loss, magnetic_acc, magnetic_f1, topological_acc, topological_f1 = train_epoch(model, train_loader, optimizer, device)
+        
+        # Validate
+        val_loss, val_magnetic_loss, val_topological_loss, val_magnetic_acc, val_magnetic_f1, val_topological_acc, val_topological_f1 = validate(model, val_loader, device)
+        
+        # Update learning rate
+        scheduler.step(val_loss)
+        
+        # Update history
+        history['train_loss'].append(train_loss)
+        history['val_loss'].append(val_loss)
+        history['train_magnetic_loss'].append(train_magnetic_loss)
+        history['val_magnetic_loss'].append(val_magnetic_loss)
+        history['train_topological_loss'].append(train_topological_loss)
+        history['val_topological_loss'].append(val_topological_loss)
+        history['magnetic_acc'].append(val_magnetic_acc)
+        history['magnetic_f1'].append(val_magnetic_f1)
+        history['topological_acc'].append(val_topological_acc)
+        history['topological_f1'].append(val_topological_f1)
+        
+        # Print progress
+        epoch_time = time.time() - epoch_start
+        print(f"Epoch {epoch+1}/{params['max_epochs']} - {epoch_time:.2f}s - "
+              f"Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f} - "
+              f"Magnetic Loss: {train_magnetic_loss:.4f}/{val_magnetic_loss:.4f} - "
+              f"Topological Loss: {train_topological_loss:.4f}/{val_topological_loss:.4f} - "
+              f"Magnetic Acc: {val_magnetic_acc:.4f} - Magnetic F1: {val_magnetic_f1:.4f} - "
+              f"Topological Acc: {val_topological_acc:.4f} - Topological F1: {val_topological_f1:.4f}")
+        
+        # Save checkpoint if best model
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'history': history,
+                'best_val_loss': best_val_loss
+            }, os.path.join(params['checkpoint_dir'], 'best_model.pth'))
+            print(f"Saved best model with validation loss: {best_val_loss:.4f}")
+            
+            # Reset early stopping counter
+            early_stop_counter = 0
+        else:
+            # Increment early stopping counter
+            early_stop_counter += 1
+            if early_stop_counter >= params['patience'] and epoch > params['min_epochs']:
+                print(f"Early stopping triggered after {epoch+1} epochs")
+                break
+    
+    # Plot training history
+    plot_training_history(history)
+    
+    return model, history
+
+def plot_training_history(history):
+    epochs = range(1, len(history['train_loss']) + 1)
+    
+    # Create a figure with subplots
+    fig, axs = plt.subplots(2, 2, figsize=(16, 12))
+    
+    # Plot losses
+    axs[0, 0].plot(epochs, history['train_loss'], 'b-', label='Training Loss')
+    axs[0, 0].plot(epochs, history['val_loss'], 'r-', label='Validation Loss')
+    axs[0, 0].set_title('Total Loss')
+    axs[0, 0].set_xlabel('Epochs')
+    axs[0, 0].set_ylabel('Loss')
+    axs[0, 0].legend()
+    
+    # Plot task-specific losses
+    axs[0, 1].plot(epochs, history['train_magnetic_loss'], 'b--', label='Train Magnetic Loss')
+    axs[0, 1].plot(epochs, history['val_magnetic_loss'], 'r--', label='Val Magnetic Loss')
+    axs[0, 1].plot(epochs, history['train_topological_loss'], 'g--', label='Train Topological Loss')
+    axs[0, 1].plot(epochs, history['val_topological_loss'], 'm--', label='Val Topological Loss')
+    axs[0, 1].set_title('Task-Specific Losses')
+    axs[0, 1].set_xlabel('Epochs')
+    axs[0, 1].set_ylabel('Loss')
+    axs[0, 1].legend()
+    
+    # Plot magnetic metrics
+    axs[1, 0].plot(epochs, history['magnetic_acc'], 'b-', label='Magnetic Accuracy')
+    axs[1, 0].plot(epochs, history['magnetic_f1'], 'r-', label='Magnetic F1 Score')
+    axs[1, 0].set_title('Magnetic Property Metrics')
+    axs[1, 0].set_xlabel('Epochs')
+    axs[1, 0].set_ylabel('Score')
+    axs[1, 0].legend()
+    
+    # Plot topological metrics
+    axs[1, 1].plot(epochs, history['topological_acc'], 'b-', label='Topological Accuracy')
+    axs[1, 1].plot(epochs, history['topological_f1'], 'r-', label='Topological F1 Score')
+    axs[1, 1].set_title('Topological Property Metrics')
+    axs[1, 1].set_xlabel('Epochs')
+    axs[1, 1].set_ylabel('Score')
+    axs[1, 1].legend()
+    
+    plt.tight_layout()
+    plt.savefig('training_history.png')
+    plt.show()
+
+# Main test function
+def run_test(test_struct_dict, test_magnetic_labels, test_topological_labels, checkpoint_path, batch_size=32):
+    # Setup device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+    
+    # Create test dataset
+    test_dataset = MaterialsDataset(test_struct_dict, test_magnetic_labels, test_topological_labels)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    
+    # Determine input dimension based on feature extraction
+    sample_features = test_dataset[0][0]
+    input_dim = sample_features.shape[0]
+    
+    # Initialize model
+    model = MagneticTopologicalModel(input_dim).to(device)
+    
+    # Load checkpoint
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    print(f"Loaded model from epoch {checkpoint['epoch']+1} with validation loss: {checkpoint['best_val_loss']:.4f}")
+    
+    # Test the model
+    test_results = test_model(model, test_loader, device)
+    
+    # You can add more analysis here based on test_results
+    
+    return test_results, model
+
+# Usage example
 if __name__ == "__main__":
-    test_results = run_test()
+    # Define hyperparameters
+    PARAMS = {
+        'batch_size': 32,
+        'learning_rate': 0.001,
+        'weight_decay': 1e-5,
+        'hidden_dims': [256, 128, 64],
+        'dropout_rate': 0.3,
+        'max_epochs': 100,
+        'min_epochs': 10,
+        'patience': 10,
+        'checkpoint_dir': './checkpoints'
+    }
+    
+    # You would need to prepare these variables:
+    # 1. train_struct_dict, val_struct_dict, test_struct_dict - dictionaries with your structure data
+    # 2. train_magnetic_labels, train_topological_labels - binary labels for training
+    # 3. val_magnetic_labels, val_topological_labels - binary labels for validation
+    # 4. test_magnetic_labels, test_topological_labels - binary labels for testing
+    
+    # Example training call:
+    # model, history = train_model(train_struct_dict, val_struct_dict, 
+    #                            train_magnetic_labels, train_topological_labels,
+    #                            val_magnetic_labels, val_topological_labels, 
+    #                            PARAMS)
+    
+    # Example testing call:
+    # test_results, model = run_test(test_struct_dict, test_magnetic_labels, test_topological_labels,
+    #                               os.path.join(PARAMS['checkpoint_dir'], 'best_model.pth'))
