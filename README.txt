@@ -6,3 +6,6 @@ Goals of research (3 - fold):
     3. Mech Interp for such generative models and generalizing interp methodology to other vanilla inverse design algos for materials discovery
 
 -Abiral Shakya, 04.04.2025
+
+
+-- integrate test time training with CDVAE ? --> super neat idea. could be big. - 04.12.2025
