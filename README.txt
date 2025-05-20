@@ -46,3 +46,16 @@ TKNN invariant
         Chern invariant n (integer n) distinguishes such classes
             chern invariant is total Berry flux in Brilloiun Zone 
             
+    N = n
+
+Graphene 
+    2D form of carbon, conduction band and valence band touch each other at 2 distinct points in Brilloiun Zone. near thosse poitns electronic dispersion resemble linear dispersion of malsless reletivitic particles
+
+
+Chiral edge mode, interface between quantum hall state and an insulator
+
+electronic states responsible for skipping motion electrons execute as their cyclotron orbits bounce off the edge
+    chiral in the sense that they propogate in one direction onl along the edge. 
+
+chiral edge states in quantum hall effect seen explicitly by solving haldane model in semi infintie geometry with an edge at y = 0
+
