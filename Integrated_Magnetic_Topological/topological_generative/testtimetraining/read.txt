@@ -2,3 +2,12 @@ read this , well
 https://www2.eecs.berkeley.edu/Pubs/TechRpts/2023/EECS-2023-86.pdf 
 
 lowkey similar to RL insights
+
+
+
+https://arxiv.org/pdf/2403.11857
+outstanding paper. "complete and efficient graph transformers for crystal material property prediction"
+
+can directly build off of this by adapting methodology for TI, addding TTT 
+further, integrate into workflow with CDVAE and RL, and custom multi task classifier for complete modelling
+

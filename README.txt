@@ -59,3 +59,11 @@ electronic states responsible for skipping motion electrons execute as their cyc
 
 chiral edge states in quantum hall effect seen explicitly by solving haldane model in semi infintie geometry with an edge at y = 0
 
+
+
+3 potential papers 
+
+1.5 multi task classification
+1.5 generative modelling 
+2. generative w/ many body considerations
+3. interpretability
