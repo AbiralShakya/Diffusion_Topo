@@ -1,0 +1,7 @@
+Diffusion model using comformer as coord system
+    inverse design with invertible mapping 
+
+symmetry aware models
+
+later on consider many body hamiltonian (new research direction)
+

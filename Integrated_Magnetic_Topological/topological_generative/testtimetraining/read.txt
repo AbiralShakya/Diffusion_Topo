@@ -11,3 +11,13 @@ outstanding paper. "complete and efficient graph transformers for crystal materi
 can directly build off of this by adapting methodology for TI, addding TTT 
 further, integrate into workflow with CDVAE and RL, and custom multi task classifier for complete modelling
 
+unit cell and set of atom base associated with unit cell. unit cell is 3x3 lattice matrix indicating how unit cell repeats itself in 3D space. 
+M = (A, P , L). A contains d_a dimensional feature vectors for n atoms in unit cell 
+
+P contains 3D Euclidian poitions of n atoms in uit cell 
+
+L decribe repreating pattersn of the unit cell structure in 3D Dspace
+ 
+crystal graph G is geometrically complete if G_1 = G_2 --> M_1 isometric to M_2
+
+getting geometric completenes is challenge for
