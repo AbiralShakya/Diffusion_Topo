@@ -1,6 +1,5 @@
 """Implementation based on the template of ALIGNN."""
 
-import imp
 import random
 from pathlib import Path
 from typing import Optional
@@ -8,23 +7,57 @@ from typing import Optional
 # from typing import Dict, List, Optional, Set, Tuple
 
 import os
+from dotenv import load_dotenv, find_dotenv
 import torch
 import numpy as np
 import pandas as pd
 from jarvis.core.atoms import Atoms
-from comformer.graphs import PygGraph, PygStructureDataset
+from ComFormerFork.graph import PygGraph, PygStructureDataset
 from jarvis.db.figshare import data as jdata
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import math
 from jarvis.db.jsonutils import dumpjson
-from pandarallel import pandarallel
-pandarallel.initialize(progress_bar=False)
 # from sklearn.pipeline import Pipeline
 import pickle as pk
 from sklearn.preprocessing import StandardScaler
 # use pandas progress_apply
 tqdm.pandas()
+
+from mp_api.client import MPRester
+
+
+load_dotenv()
+load_dotenv(Path("/Users/abiralshakya/Documents/Research/Topological_Insulators_OnGithub/generative_nmti/Integrated_Magnetic_Topological/matprojectapi.env"))
+API_KEY = os.getenv("MP_API_KEY")
+
+dft3d = jdata("dft_3d")               
+df = pd.DataFrame(dft3d)             
+df["mpid"] = df["db_ids"].apply(lambda x: x.get("materialsproject") if isinstance(x, dict) else None)
+df = df.dropna(subset=["mpid"])        # keep only entries with an MP match
+
+
+with MPRester(api_key = API_KEY) as m:
+    docs = m.materials.summary.search(
+        jid__in=df["jid"].tolist(),
+        fields=["jid","topological_type"]
+    )
+
+with MPRester(API_KEY) as m:
+    docs = m.materials.summary.search(
+        material_ids=df["mpid"].tolist(),
+        fields=["material_id","topological_type"]
+    )
+label_df = pd.DataFrame([{
+    "mpid": d.material_id,
+    "topo_type": d.topological_type
+} for d in docs])
+# map to binary
+good = {"Z2_INSULATOR","CRYSTALLINE_INSULATOR"}
+label_df["is_topo"] = label_df["topo_type"].isin(good).astype(int)
+
+df = df.merge(label_df[["mpid","is_topo"]], on="mpid", how="left")
+df["is_topo"] = df["is_topo"].fillna(0).astype(int)
 
 def load_dataset(
     name: str = "dft_3d",
