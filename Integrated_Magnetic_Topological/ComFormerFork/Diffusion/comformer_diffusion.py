@@ -4,6 +4,8 @@ from Diffusion.guassian_diffusion import (
     GaussianDiffusion, ModelMeanType, ModelVarType, LossType
 )
 
+from models.TI_conformer import eComformerConfig, eComformer
+
 betas = torch.linspace(0.0001, 0.02, steps=1000).numpy()
 lattice_diff = GaussianDiffusion(
     betas=betas,
@@ -87,18 +89,7 @@ class JointDiffusion:
 joint = JointDiffusion(lattice_diff, coord_sigmas, species_Q)
 
 class JointDiffusionTransformer(torch.nn.Module):
-    def __init__(self, num_species, d_model=128, n_layers=6, heads=4):
-        super().__init__()
-        # -- your point‐cloud / graph Transformer goes here.
-        # It should ingest (Lt, Ft, At, t) and output:
-        #   * epsL_hat:   (B,3,3)
-        #   * scoreF_hat: (B,N,3)
-        #   * logitsA:    (B,N,K)
-        
-    def forward(self, Lt, Ft, At, t):
-        # embed time‐step t, run self‐attention over the N points, 
-        # incorporate lattice via relative‐pos / spherical embeddings, etc.
-        return epsL_hat, scoreF_hat, logitsA
+    def __init__(self, num_species: int, conv_config: eComf)
 
 # Instantiate your model
 model = JointDiffusionTransformer(num_species=K)

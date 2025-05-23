@@ -10,7 +10,7 @@ import torch.nn as nn
 
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.typing import Adj, OptTensor, PairTensor
-from comforemr.models.utils import softmax
+from models.utils import softmax
 from torch_scatter import scatter
 
 

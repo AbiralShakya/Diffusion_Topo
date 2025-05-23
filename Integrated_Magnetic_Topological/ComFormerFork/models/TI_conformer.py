@@ -6,10 +6,10 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch_scatter import scatter
-from comformer.models.utils import RBFExpansion
-from comformer.utils import BaseSettings
-from comformer.features import angle_emb_mp
-from comformer.models.transformer import ComformerConv, ComformerConv_edge, ComformerConvEqui
+from models.utils import RBFExpansion
+from utils import BaseSettings
+from features import angle_emb_mp
+from models.transformer import ComformerConv, ComformerConv_edge, ComformerConvEqui
 
 
 class iComformerConfig(BaseSettings):
