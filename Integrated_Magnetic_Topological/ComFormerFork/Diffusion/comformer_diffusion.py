@@ -92,28 +92,73 @@ class JointDiffusion:
 
         return Lt, Ft, At, noiseF
 
-    def loss(self, model, L0, F0, A0, t):
-        Lt, Ft, At, noiseF = self.q_sample_all(L0, F0, A0, t)
-        epsL_hat, scoreF_hat, logitsA = model(Lt, Ft, At, t)
+    # def loss(self, model, L0, F0, A0, t):
+    #     Lt, Ft, At, noiseF = self.q_sample_all(L0, F0, A0, t)
+        
+    #     epsL_hat, scoreF_hat, logitsA = model(Lt, Ft, At, t)
+
+    #     # lattice ε‐prediction target
+    #     α_bar = torch.from_numpy(self.lattice.alphas_cumprod).to(L0.device)
+    #     σ_bar = torch.from_numpy(self.lattice.sqrt_one_minus_alphas_cumprod).to(L0.device)
+    #     epsL_target = ((Lt - α_bar[t].view(-1,1,1)*L0) /
+    #                    σ_bar[t].view(-1,1,1))
+
+    #     # coord score‐matching target: ∇_Ft log 𝒩(Ft;F0,σ_t^2I) = −noiseF/σ_t
+    #     σt = self.coord_sigmas[t].view(-1,1,1)
+    #     scoreF_target = -noiseF / σt
+
+    #     # species cross‐entropy
+    #     loss_L = F.mse_loss(epsL_hat, epsL_target)
+    #     loss_F = F.mse_loss(scoreF_hat, scoreF_target)
+    #     loss_A = F.cross_entropy(logitsA.view(-1, K), A0.view(-1))
+
+    #     return loss_L + loss_F + loss_A
+
+    # In JointDiffusion class:
+# def loss(self, model, L0, F0, A0, t): # Original
+# Needs to become something like:
+    def loss(self, model, L0, F0, A0, edge_index_0, edge_attr_0, batch_idx_0, t):
+        Lt_batch, Ft_batch, At_batch, noiseF_batch = self.q_sample_all(L0, F0, A0, t)
+       
+        epsL_hat, scoreF_hat, logitsA = model(Lt_batch, Ft_batch, At_batch,
+                                            edge_index_0, edge_attr_0, batch_idx_0, t)
 
         # lattice ε‐prediction target
-        α_bar = torch.from_numpy(self.lattice.alphas_cumprod).to(L0.device)
-        σ_bar = torch.from_numpy(self.lattice.sqrt_one_minus_alphas_cumprod).to(L0.device)
-        epsL_target = ((Lt - α_bar[t].view(-1,1,1)*L0) /
-                       σ_bar[t].view(-1,1,1))
+        # Ensure L0 and Lt_batch are properly aligned for batch ops
+        α_bar = torch.from_numpy(self.lattice.alphas_cumprod).to(L0.device)[t] # (B,)
+        σ_bar = torch.from_numpy(self.lattice.sqrt_one_minus_alphas_cumprod).to(L0.device)[t] # (B,)
+        # Expand for (B,3,3) operations
+        epsL_target = ((Lt_batch - α_bar.view(-1,1,1)*L0) /
+                    σ_bar.view(-1,1,1))
 
         # coord score‐matching target: ∇_Ft log 𝒩(Ft;F0,σ_t^2I) = −noiseF/σ_t
-        σt = self.coord_sigmas[t].view(-1,1,1)
-        scoreF_target = -noiseF / σt
+        # σt comes from self.coord_sigmas[t] which should be (B,)
+        # noiseF_batch is (total_nodes,3)
+        # σt needs to be expanded for nodes
+        
+        σt_expanded = self.coord_sigmas.to(F0.device)[t][batch_idx_0].view(-1,1) # (total_nodes, 1)
+        # if Ft is (B,N,3), then σt.view(-1,1,1) is correct. If Ft is (total_nodes,3), adapt σt indexing.
+        # Original code for Ft used view(-1,1,1) which implies Ft was (B,N,3) in q_sample_all.
+        # If Ft_batch is (total_nodes, 3), then σt needs to be indexed by t and then by batch_idx_0
+        # to align with each node.
+        # Assuming Ft_batch from q_sample_all is (B, N_max, 3) if padded, or you handle variable N carefully.
+        # Let's assume Ft and noiseF are (B,N,3) as in the original snippet's `q_sample_all` for Ft.
+        # Then σt.view(-1,1,1) is correct for element-wise ops if σt is (B,).
+
+        # Corrected σt application for scoreF_target, assuming F0 and noiseF are (B,N,3)
+        # and t is (B,)
+        σt_per_sample = self.coord_sigmas.to(F0.device)[t] # Shape (B,)
+        scoreF_target = -noiseF_batch / σt_per_sample.view(-1,1,1) # Broadcasts (B,) to (B,N,3)
 
         # species cross‐entropy
+        # logitsA: (total_nodes, K), A0_batch: (total_nodes,)
         loss_L = F.mse_loss(epsL_hat, epsL_target)
-        loss_F = F.mse_loss(scoreF_hat, scoreF_target)
-        loss_A = F.cross_entropy(logitsA.view(-1, K), A0.view(-1))
+        loss_F = F.mse_loss(scoreF_hat, scoreF_target) # scoreF_hat should be (total_nodes, 3) or (B,N,3)
+        loss_A = F.cross_entropy(logitsA.view(-1, K), A0.view(-1)) # A0 here should be the batched, flattened A0 corresponding to logitsA
 
         return loss_L + loss_F + loss_A
 
-joint = JointDiffusion(lattice_diff, coord_sigmas, species_Q)
+#joint = JointDiffusion(lattice_diff, coord_sigmas, species_Q)
 
 class JointDiffusionTransformer(torch.nn.Module):
     def __init__(self, num_species: int, 
@@ -166,6 +211,3 @@ class JointDiffusionTransformer(torch.nn.Module):
         logitsA = self.species_head(node_feats)
 
         return epsL_hat, scoreF_hat, logitsA
-
-# Instantiate your model
-model = JointDiffusionTransformer(num_species=K)
