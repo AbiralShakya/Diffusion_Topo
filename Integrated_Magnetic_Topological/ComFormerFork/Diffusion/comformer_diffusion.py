@@ -60,7 +60,6 @@ coord_sigmas = make_wrapped_normal_sigmas(
     schedule="geometric",
 )
 
-
 class JointDiffusion:
     def __init__(self, lattice_diff, coord_sigmas, species_Q):
         self.lattice = lattice_diff
@@ -211,3 +210,92 @@ class JointDiffusionTransformer(torch.nn.Module):
         logitsA = self.species_head(node_feats)
 
         return epsL_hat, scoreF_hat, logitsA
+    
+
+
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# model = JointDiffusionTransformer(num_species=K).to(device)
+# joint_diffusion_obj = JointDiffusion(lattice_diff, coord_sigmas, species_Q)
+# optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4) # Example optimizer
+
+# num_epochs = ...
+# train_loader = ... (your DataLoader)
+
+# model.train()
+# for epoch in range(num_epochs):
+#     for batch_data in train_loader:
+#         # Assuming batch_data is a dict or tuple from your DataLoader
+#         # L0, F0, A0, edge_index, edge_attr, batch_map_nodes = ... unpack and move to device
+#         L0 = batch_data['L0'].to(device)
+#         F0 = batch_data['F0'].to(device) # e.g., (B, N_max, 3) padded or (total_nodes, 3)
+#         A0 = batch_data['A0'].to(device) # e.g., (B, N_max) or (total_nodes,)
+#         edge_index = batch_data['edge_index'].to(device)
+#         edge_attr = batch_data['edge_attr'].to(device)
+#         batch_idx = batch_data['batch_idx'].to(device) # Maps nodes to graph index in batch
+
+#         optimizer.zero_grad()
+
+#         # Sample timesteps for each item in the batch
+#         # t should have shape (B,) where B is the batch size.
+#         t = torch.randint(0, T, (L0.size(0),), device=device).long()
+
+#         # Calculate loss using the modified loss function
+#         # The shapes of F0, A0 passed to loss must match what q_sample_all expects.
+#         # If using total_nodes representation, you'll need to adjust how L0/Lt and t are handled for batching.
+#         # The original code assumes L0 is (B,3,3) and t is (B,).
+#         # For F0 (B,N,3), A0 (B,N), this is consistent.
+#         total_loss = joint_diffusion_obj.loss(model, L0, F0, A0, edge_index, edge_attr, batch_idx, t)
+
+#         total_loss.backward()
+#         optimizer.step()
+
+#         # Log loss, etc.
+#     # print(f"Epoch {epoch}, Loss: {total_loss.item()}")
+    # Save checkpoints
+
+
+    # model.eval()
+# Lt_curr, Ft_curr, At_curr = Lt_T, Ft_T, At_T
+# # Precompute \bar{Q}_t for D3PM species sampling if needed
+# # Q_bar_matrices = ... # Compute cumulative products of species_Q
+
+# for time_step in range(T - 1, -1, -1):
+#     t = torch.full((B_gen,), time_step, device=device, dtype=torch.long)
+
+#     # Recompute graph structure if dynamic, or use a fixed one
+#     # edge_index_curr, edge_attr_curr = compute_graph(Ft_curr, batch_idx_gen)
+
+#     with torch.no_grad():
+#         epsL_hat, scoreF_hat, logitsA = model(Lt_curr, Ft_curr, At_curr,
+#                                               edge_index_curr, edge_attr_curr, batch_idx_gen, t)
+
+#     # 1. Denoise Lattice (using p_sample from GaussianDiffusion)
+#     # This typically involves: L_{t-1} = (1/sqrt(alpha_t)) * (Lt - (beta_t / sqrt(1-alpha_bar_t)) * epsL_hat) + sigma_t * z_L
+#     # Refer to your GaussianDiffusion implementation for the exact p_sample step.
+#     Lt_curr = lattice_diff.p_sample(model_output=epsL_hat, x=Lt_curr, t=t.cpu()).to(device) # Adapt based on your p_sample signature
+
+#     # 2. Denoise Coordinates (Score-based sampling)
+#     # noiseF_pred = -scoreF_hat * joint_diffusion_obj.coord_sigmas[t].view(-1,1,1).to(device)
+#     # F0_pred = Ft_curr - joint_diffusion_obj.coord_sigmas[t].view(-1,1,1).to(device) * noiseF_pred
+#     # Or, more generally, use a score-based SDE/ODE solver step.
+#     # E.g., Euler-Maruyama for reverse SDE:
+#     # sigma_t = joint_diffusion_obj.coord_sigmas[t].view(-1,1,1).to(device)
+#     # sigma_t_minus_1 = joint_diffusion_obj.coord_sigmas[t-1].view(-1,1,1).to(device) if time_step > 0 else torch.zeros_like(sigma_t)
+#     # F_drift = -sigma_t**2 * scoreF_hat
+#     # F_diffusion = sigma_t * sqrt_delta_t * torch.randn_like(Ft_curr) (delta_t needs careful definition)
+#     # A common approach from score SDE papers (approximate, assumes t is continuous 0..1, sigmas defined on that):
+#     # dt = -1.0 / T
+#     # Ft_curr = Ft_curr + (sigma_t**2) * scoreF_hat * (-dt) + sigma_t * np.sqrt(-dt) * torch.randn_like(Ft_curr)
+#     # This part requires careful implementation based on the precise nature of coord_sigmas and chosen sampler.
+#     # For simplicity, let's denote a conceptual step:
+#     Ft_curr = sample_coordinates_step(Ft_curr, scoreF_hat, joint_diffusion_obj.coord_sigmas, t, device) # You'll need to implement this
+
+#     # 3. Denoise Species (D3PM reverse step)
+#     # This involves:
+#     #   a. Get p(A0_hat | Lt, Ft, At, t) = softmax(logitsA)
+#     #   b. Sample A0_hat from this distribution.
+#     #   c. Sample A_{t-1} from q(A_{t-1} | At_curr, A0_hat) using species_Q and precomputed Q_bar.
+#     # This is complex. For a simpler start (but less accurate), you might sample A0 directly from logitsA at each step.
+#     At_curr = sample_species_step(At_curr, logitsA, joint_diffusion_obj.species_Q, Q_bar_matrices, t, device) # Implement this
+
+# # Lt_gen, Ft_gen, At_gen = Lt_curr, Ft_curr, At_curr are the generated structures
