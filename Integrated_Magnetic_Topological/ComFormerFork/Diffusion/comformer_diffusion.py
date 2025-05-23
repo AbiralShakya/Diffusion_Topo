@@ -1,4 +1,7 @@
 import torch
+import torch_scatter
+import numpy as np
+import torch.nn as nn
 import torch.nn.functional as F
 from Diffusion.guassian_diffusion import (
     GaussianDiffusion, ModelMeanType, ModelVarType, LossType
@@ -30,8 +33,32 @@ def make_d3pm_transition_matrices(T, K, β_start=0.001, β_end=0.1):
     Q = [(1 - β)*I + (β/K)*ones for β in betas]
     return torch.stack(Q)  # shape (T, K, K)
 
-K = 5
+K = 5 # num atom types in dataset
+T = 1000 # num diffusion steps
 species_Q = make_d3pm_transition_matrices(T, K)
+
+def make_wrapped_normal_sigmas(T, sigma_min=1e-4, sigma_max=2.0, schedule="geometric"):
+    """
+    Build a schedule of T noise‐scales for wrapped‐normal diffusion.
+    sigma_min = σ₁, sigma_max = σ_T.
+    """
+    if schedule == "linear":
+        sigmas = np.linspace(sigma_min, sigma_max, T)
+    elif schedule == "geometric":
+        # geometric progression from sigma_min to sigma_max
+        sigmas = np.exp(
+            np.linspace(np.log(sigma_min), np.log(sigma_max), T)
+        )
+    else:
+        raise ValueError(f"Unknown schedule {schedule}")
+    return torch.from_numpy(sigmas).float()  # shape (T,)
+
+coord_sigmas = make_wrapped_normal_sigmas(
+    T=T,
+    sigma_min=1e-3,
+    sigma_max=2.0,
+    schedule="geometric",
+)
 
 
 class JointDiffusion:
@@ -89,7 +116,56 @@ class JointDiffusion:
 joint = JointDiffusion(lattice_diff, coord_sigmas, species_Q)
 
 class JointDiffusionTransformer(torch.nn.Module):
-    def __init__(self, num_species: int, conv_config: eComf)
+    def __init__(self, num_species: int, 
+                 conv_config: eComformerConfig = eComformerConfig(name = "eComformer"),
+    hidden_dim: int = 256):
+        super().__init__()
+
+        self.comformer = eComformer(conv_config)
+        self.epsL_head = nn.Linear(conv_config.node_features, 9)
+        self.scoreF_head = nn.Linear(conv_config.node_features, 3)
+        self.species_head = nn.Linear(conv_config.node_features, num_species)
+
+        self.time_embed = nn.Embedding(1000, conv_config.node_features)
+
+
+    def forward(self, Lt, Ft, At, edge_index, edge_attr, batch, t):
+        B = Lt.size(0)
+        
+        atom_embed = F.one_hot(At, num_classes=self.species_head.out_features).float()
+
+        coord_embed = nn.Linear(3, atom_embed.size(1)).to(Ft.device)(Ft)
+
+        # 3) time embedding (expand per node)
+        time_vec = self.time_embed(t)                # (B, F)
+        time_vec = time_vec[batch]                   # (B_total_nodes, F)
+
+        # combine
+        x = atom_embed + coord_embed + time_vec      # (B_total_nodes, F)
+
+        # if you want, you can also inject a graph‐level "lattice embedding" into each node:
+        L_flat = Lt.view(B, 9)
+        L_embed = nn.Linear(9, x.size(1)).to(Lt.device)(L_flat)   # (B,F)
+        x = x + L_embed[batch]
+
+        # --- B) run ComformerConv layers ---
+        # comformer expects a PyG‐style tuple (data, ldata, lattice)
+        # Here `data` is (x, edge_index, edge_attr) and ignore lattice‐based equivariant update:
+        node_feats = self.comformer((x, edge_index, edge_attr))
+
+        # --- C) project into each head ---
+        # 1) lattice ε (pool per‐graph then predict 3×3 noise)
+        #    note: flatten back to (B,3,3)
+        pooled = torch_scatter.scatter_mean(node_feats, batch, dim=0)  # (B, F)
+        epsL_hat = self.epsL_head(pooled).view(B, 3, 3)
+
+        # 2) coord score: (B_total_nodes,3)
+        scoreF_hat = self.scoreF_head(node_feats)
+
+        # 3) species logits: (B_total_nodes, K)
+        logitsA = self.species_head(node_feats)
+
+        return epsL_hat, scoreF_hat, logitsA
 
 # Instantiate your model
 model = JointDiffusionTransformer(num_species=K)
