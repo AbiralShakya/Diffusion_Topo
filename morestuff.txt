@@ -5,3 +5,21 @@ symmetry aware models
 
 later on consider many body hamiltonian (new research direction)
 
+Adapted from https://arxiv.org/html/2406.09263v2#bib.bib39
+and the comformer paper from my goats at TAMU 
+
+high level design:
+
+    1. jarvis + topological labels from MP structures
+    2. Built PyG graphs 
+    3. precompute angles fro comformerconv_edge
+
+    1. turn atom types + z_c (property + topo + time), iniital node 
+    2. denoiser: a stack of comformer block's instead of regular transformer 
+    3. heads: predict the three + auxillary topo classifier I built
+
+    1. loss: std diffusion loss
+    2. lambda_topo * crossentropy(top_lotits, true_topo)
+
+    1. conditioning to be figured out
+    
