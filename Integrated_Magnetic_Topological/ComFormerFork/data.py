@@ -6,9 +6,11 @@ from typing import Optional
 
 # from typing import Dict, List, Optional, Set, Tuple
 
+from mp_api.client import MPRester
+import torch
+
 import os
 from dotenv import load_dotenv, find_dotenv
-import torch
 import numpy as np
 import pandas as pd
 from jarvis.core.atoms import Atoms
@@ -23,9 +25,6 @@ import pickle as pk
 from sklearn.preprocessing import StandardScaler
 # use pandas progress_apply
 tqdm.pandas()
-
-from mp_api.client import MPRester
-
 
 load_dotenv()
 load_dotenv(Path("/Users/abiralshakya/Documents/Research/Topological_Insulators_OnGithub/generative_nmti/Integrated_Magnetic_Topological/matprojectapi.env"))
