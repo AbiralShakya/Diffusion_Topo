@@ -1,0 +1,22 @@
+TI, TSM, Trival topology inputs based on our classifier that we build (its an input)
+
+target material properties 
+    - crucial to integrate polarizability,  born tensors, and more
+
+electric field parameters for pertubation analysis 
+    field strength, direction, temperature
+
+output: 
+    atomic structure (unit cell lattice params, poscar file maybe?)
+
+    predicted properties
+        predictedd topoological classification (we want TI)
+        magnetic state (and specifics)
+        band structure and band gap under no field
+        band structure and topological classification undder specified electric field
+
+Specifically: 
+    we are looking for electric field induced topological phase transition. 
+
+
+persistent homology based methodology

@@ -1,0 +1,1 @@
+scp -r ~/Documents/Research/GraphVectorTopological/multimodal_materials_db_mp as0714@della.princeton.edu:/scratch/gpfs/as0714/graph_vector_topological_insulator

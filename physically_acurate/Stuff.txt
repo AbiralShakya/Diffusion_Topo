@@ -1,0 +1,60 @@
+Electron electron interactions not studied much (is it relevant?)
+
+Interesting computational experiment could be the model but with and without ? 
+*read more on many body simulation regarding electron electron interaction for TI
+
+notes from this nice paper: https://arxiv.org/pdf/2204.07816
+
+overview:
+    quantum many body problem
+    entanglement built among lots of particles interacting with each other 
+    hilbert space of solution grows exponentially with size of problem 
+
+    quantum monte carlo method; densitymatrix renormalization group
+
+    computational cost of exact diagonlization (ED) grows exponentially with system size
+
+    tensory network methods (projected entagneld pari states (PEPS)) developed which can simulate fermoionic and frustated systems 
+
+
+
+    deep learning methods for quantum many body problems 
+        quantum spin model as example
+            quantum many body state is represented by superposition of spin configurations 
+            
+            consider DOF on each site is k, hilbert space is k^N (for N total sites)
+
+            weight of spin config is represented by NN &^ network parameters optimized to determine ground state of system 
+
+            MCMC performed (lol lol). when collecting sample, the forward of NN gives local energy and backgard gives local derivative. 
+            gradeitns and covariance matrix needed for Stochatic Reconfiguration (SR) optimization method are calculated 
+
+            network params are updated. 
+
+
+        *this paper is like from 2022 so lowkey kinda old for SOTA methods haha
+
+        talks about RBMs (makes sense in regards to energy config, lol)
+
+        their method: CNN 'optimized' for HPC
+
+        transfer learning, local optimizations avoided and trainign steps for large lattice significatntly reduced
+
+
+
+https://link.aps.org/accepted/10.1103/PhysRevB.107.075147
+"Transformer quantum state: A multipurpose model for
+quantum many-body problems"
+
+
+they do autoregression, hm
+to represent prob dist use transformer and autoregressively model entire dist as product of conditional dist
+
+    autoregressive struct allows for efficient sampling since each conditional prob does not depend on any variable s_j with j > idea
+    we assume that J has predefined prior dist which in general can be chosen as uniform dist over range of interest
+
+    model quantum states which are complex calues quasiprobability dists
+
+    ground state of family of Hamiltonians 
+        1. find ground state of many body Hamiltonians
+        minimize variational energy estimation
