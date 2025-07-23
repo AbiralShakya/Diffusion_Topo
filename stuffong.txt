@@ -1,0 +1,70 @@
+we have 33,000 poscar files for trivial, topological insulators, and topological semi metals
+
+we need to have an automated piepline to convert them into DFT inputs, run the DFT calculations, process them through Wannier90, and then feed the resulting Wannier90 files into Wannier Berri for the final analysis
+
+Wannier Berri performs Wnnier interpolation and calculations various properties from Wannier representation of material's electronci structure. needs: 
+    1. quantum ESPRESSO inputs 
+        pw.x output (.out fiels and .save directories)
+            contain raw Kohn-Sham eigenvalues and Bloch wavefunctions on coarse k point grid from your SCF and nSCF calculations
+
+            Wannier Berri reads these, particularly the band structure 
+
+            Pseudopotentials crucial for the pw.x calculations themselves
+
+    2. VASP inputs 
+        Wannier Berri doesn't read VASP native output files 
+
+
+High-Throughput DFT Calculations (Quantum ESPRESSO / VASP):
+
+Input Generation: Automate the conversion of your 33,000 POSCARs into DFT input files (e.g., pw.in for QE, INCAR/POSCAR/KPOINTS/POTCAR for VASP) using Python libraries like pymatgen or ASE.
+
+Pseudopotentials/Potentials: Select appropriate pseudopotentials (for QE) or PAW potentials (for VASP) for all elements. Consider using a consistent pseudopotential library (e.g., SSSP for QE).
+
+Spin-Orbit Coupling (SOC): Crucially, enable SOC in your DFT calculations for all materials containing heavier elements (generally Z > 10-20), or even for all if you are unsure of their topological nature, as SOC is often a prerequisite for non-trivial topology.
+
+Quantum ESPRESSO: Set lspinorb = .TRUE. in the &SYSTEM namelist. Use fully relativistic pseudopotentials.
+
+VASP: Set LSORBIT = .TRUE. and ICHARG = 11 (or ICHARG = 1 then LORBIT = 11 for non-self-consistent bands) in INCAR. Ensure you use PBE potentials with _soc extensions or similar.
+
+Magnetic Considerations: If you suspect or are targeting magnetic topological materials, perform spin-polarized calculations.
+
+Quantum ESPRESSO: Set nspin = 2 and define initial magnetizations.
+
+VASP: Set ISPIN = 2 and MAGMOM tags.
+
+Calculation Types: You'll need at least SCF (self-consistent field) and then non-SCF calculations on a dense k-mesh.
+
+Convergence: Before running all 33,000, perform rigorous convergence tests (k-point mesh, energy cutoff, nbnd or NPAR/NCORE in VASP) on a representative subset of materials, especially those with different element types and crystal structures.
+
+Workflow Management: Use a robust workflow management system like AiiDA to orchestrate the thousands of DFT jobs, handle job submission, monitor progress, and manage data.
+
+Wannier90 Pre-processing:
+
+After successful DFT calculations, run wannier90.x -pp (for QE/VASP integration) to generate the *.nnkp and *.win files (if not already custom-generated).
+
+Then run pw2wannier90.x (for QE) or configure VASP outputs to generate *.mmn, *.amn, *.eig files.
+
+Wannier Berri Analysis:
+
+Input Data: Load the generated *.mmn, *.eig, and *.win (from Wannier90/DFT codes) into Wannier Berri using its System_w90 object.
+
+Symmetry and Spin: When initializing your Wannier Berri System object, ensure spin=True if you included SOC or magnetism in your DFT calculations. This enables Wannier Berri to properly handle the double group symmetries and spin properties. Wannier Berri is explicitly designed to handle magnetic symmetries.
+
+Projections: Carefully select appropriate initial projections (wannierberri.symmetry.projections.Projection) based on the orbital character of the bands relevant to your topological analysis. This can be challenging for high-throughput and may require some trial and error or automated tools for orbital character analysis.
+
+Topological Invariant Calculation: Use Wannier Berri's capabilities to:
+
+Calculate Wilson loops or Wannier charge centers to determine topological invariants (e.g., 
+mathbbZ_2 invariants).
+
+Analyze symmetry indicators using the methods outlined in the "Topological Quantum Chemistry" paper. Wannier Berri integrates with irrep (a Python library for irreducible representations) which is highly relevant to this paper's methodology.
+
+Compute Berry curvature, Chern numbers, or other quantities relevant to your specific topological classification.
+
+
+speed from Wannier Berri: its log scale graph on the https://wannier-berri.org/timing.html
+
+    1000 / 60 = 100 / 6 like about 16 min per but thats upper bound with a lot of fermi levels
+
+the bottleneck is the quantum espresso dft calculation.. 
